@@ -36,17 +36,17 @@ G_BEGIN_DECLS
 #define GST_IS_RCLCPP_SUBSCRIBER_CLASS(obj)   (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_RCLCPP_SUBSCRIBER))
 
 
-class GstSubscriberNode : public rclcpp::Node {
+class GstCompressedSubscriberNode : public rclcpp::Node {
 public:
-  GstSubscriberNode(const std::string& name,
+  GstCompressedSubscriberNode(const std::string& name,
                     const std::string& topic_name,
-                    std::shared_ptr<std::queue<sensor_msgs::msg::Image::SharedPtr>> queue);
-  ~GstSubscriberNode();
+                    std::shared_ptr<std::queue<sensor_msgs::msg::CompressedImage::SharedPtr>> queue);
+  ~GstCompressedSubscriberNode();
 
-  void on_image(const sensor_msgs::msg::Image::SharedPtr msg);
+  void on_image(const sensor_msgs::msg::CompressedImage::SharedPtr msg);
 
-  std::shared_ptr<rclcpp::Subscription<sensor_msgs::msg::Image>> subscriber_;
-  std::shared_ptr<std::queue<sensor_msgs::msg::Image::SharedPtr>> queue_;
+  std::shared_ptr<rclcpp::Subscription<sensor_msgs::msg::CompressedImage>> subscriber_;
+  std::shared_ptr<std::queue<sensor_msgs::msg::CompressedImage::SharedPtr>> queue_;
 };
 
 typedef struct _GstRclcppSubscriber GstRclcppSubscriber;
@@ -55,9 +55,8 @@ typedef struct _GstRclcppSubscriberClass GstRclcppSubscriberClass;
 struct _GstRclcppSubscriber
 {
   GstPushSrc base_rclcppsubscriber;
-  std::shared_ptr<std::queue<sensor_msgs::msg::Image::SharedPtr>> queue;
-  std::shared_ptr<GstSubscriberNode> node;
-  bool initialized_caps;
+  std::shared_ptr<std::queue<sensor_msgs::msg::CompressedImage::SharedPtr>> queue;
+  std::shared_ptr<GstCompressedSubscriberNode> node;
 };
 
 struct _GstRclcppSubscriberClass

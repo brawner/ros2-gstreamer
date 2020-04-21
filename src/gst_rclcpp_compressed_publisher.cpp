@@ -34,15 +34,12 @@
 #include "config.h"
 #endif
 
-#include <stdexcept>
-
 #include <gst/gst.h>
 #include <gst/video/video.h>
 #include <gst/video/gstvideosink.h>
 
 #include "rclcpp_gstreamer/image_encoding_conversions.hpp"
-#include "rclcpp_gstreamer/gst_rclcpp_publisher.h"
-#include "sensor_msgs/image_encodings.hpp"
+#include "rclcpp_gstreamer/gst_rclcpp_compressed_publisher.h"
 
 GST_DEBUG_CATEGORY_STATIC (gst_rclcpp_publisher_debug_category);
 #define GST_CAT_DEFAULT gst_rclcpp_publisher_debug_category
@@ -73,31 +70,25 @@ enum
 
 /* class initialization */
 
-G_DEFINE_TYPE_WITH_CODE (GstRclcppPublisher, gst_rclcpp_publisher, GST_TYPE_VIDEO_SINK,
+G_DEFINE_TYPE_WITH_CODE (GstRclcppCompressedPublisher, gst_rclcpp_publisher, GST_TYPE_VIDEO_SINK,
   GST_DEBUG_CATEGORY_INIT (gst_rclcpp_publisher_debug_category, "rclcpp_publisher", 0,
   "debug category for rclcpp_publisher element"));
 
 static void
-gst_rclcpp_publisher_class_init (GstRclcppPublisherClass * klass)
+gst_rclcpp_publisher_class_init (GstRclcppCompressedPublisherClass * klass)
 {
   GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
   GstVideoSinkClass *video_sink_class = GST_VIDEO_SINK_CLASS (klass);
 
   std::stringstream ss;
   ss << "video/x-raw,width = (int)[1, 32768], height = (int)[1, 32768], framerate = (fraction)[ 0/1, 2147483647/1 ], channels = (int)[3, 4], format={";
-  // ss << "YUY2, UYVY, RGBA, RGB, BGR, GRAY8, GRAY16_BE, GRAY16_LE" << "}";
-  auto supported_encodings = EncodingConversions::supported_gst_encodings();
-  for (size_t i = 0; i < supported_encodings.size(); ++i) {
-    ss << supported_encodings[i];
-    if (i < supported_encodings.size() - 1) {
-      ss << ", ";
-    }
+  for (auto encoding : EncodingConversions::supported_gst_compressed_encodings()) {
+    ss << encoding << ", ";
   }
-  ss << "}";
-  std::cout << "Creating caps with template: " << ss.str() << std::endl;
+  ss << "}"
   /* Setting up pads and setting metadata should be moved to
      base_class_init if you intend to subclass this class. */
-  auto caps = gst_caps_from_string(ss.str().c_str());
+  auto caps = gst_caps_from_string(ss.string().c_str());
   gst_element_class_add_pad_template (GST_ELEMENT_CLASS(klass),
       gst_pad_template_new ("sink", GST_PAD_SINK, GST_PAD_ALWAYS, caps));
 
@@ -113,17 +104,17 @@ gst_rclcpp_publisher_class_init (GstRclcppPublisherClass * klass)
 }
 
 static void
-gst_rclcpp_publisher_init (GstRclcppPublisher *rclcpp_publisher)
+gst_rclcpp_publisher_init (GstRclcppCompressedPublisher *rclcpp_publisher)
 {
   rclcpp::init(0, nullptr);
-  rclcpp_publisher->node = std::make_unique<GstPublisherNode>("gst_publisher", "image");
+  rclcpp_publisher->node = std::make_unique<GstCompressedPublisherNode>("gst_publisher", "image");
 }
 
 void
 gst_rclcpp_publisher_set_property (GObject * object, guint property_id,
     const GValue * value, GParamSpec * pspec)
 {
-  GstRclcppPublisher *rclcpp_publisher = GST_RCLCPP_PUBLISHER (object);
+  GstRclcppCompressedPublisher *rclcpp_publisher = GST_RCLCPP_COMPRESSED_PUBLISHER (object);
 
   GST_DEBUG_OBJECT (rclcpp_publisher, "set_property");
 
@@ -138,7 +129,7 @@ void
 gst_rclcpp_publisher_get_property (GObject * object, guint property_id,
     GValue * value, GParamSpec * pspec)
 {
-  GstRclcppPublisher *rclcpp_publisher = GST_RCLCPP_PUBLISHER (object);
+  GstRclcppCompressedPublisher *rclcpp_publisher = GST_RCLCPP_COMPRESSED_PUBLISHER (object);
 
   GST_DEBUG_OBJECT (rclcpp_publisher, "get_property");
 
@@ -152,7 +143,7 @@ gst_rclcpp_publisher_get_property (GObject * object, guint property_id,
 void
 gst_rclcpp_publisher_dispose (GObject * object)
 {
-  GstRclcppPublisher *rclcpp_publisher = GST_RCLCPP_PUBLISHER (object);
+  GstRclcppCompressedPublisher *rclcpp_publisher = GST_RCLCPP_COMPRESSED_PUBLISHER (object);
 
   GST_DEBUG_OBJECT (rclcpp_publisher, "dispose");
 
@@ -195,7 +186,7 @@ static void print_caps (const GstCaps * caps, const gchar * pfx) {
 void
 gst_rclcpp_publisher_finalize (GObject * object)
 {
-  GstRclcppPublisher *rclcpp_publisher = GST_RCLCPP_PUBLISHER (object);
+  GstRclcppCompressedPublisher *rclcpp_publisher = GST_RCLCPP_COMPRESSED_PUBLISHER (object);
 
   GST_DEBUG_OBJECT (rclcpp_publisher, "finalize");
 
@@ -207,22 +198,15 @@ gst_rclcpp_publisher_finalize (GObject * object)
 static GstFlowReturn
 gst_rclcpp_publisher_show_frame (GstVideoSink * sink, GstBuffer * buf)
 {
-  GstRclcppPublisher *rclcpp_publisher = GST_RCLCPP_PUBLISHER (sink);
+  GstRclcppCompressedPublisher *rclcpp_publisher = GST_RCLCPP_COMPRESSED_PUBLISHER (sink);
 
   GST_DEBUG_OBJECT (rclcpp_publisher, "show_frame");
   GstPad * pad = gst_element_get_static_pad (reinterpret_cast<GstElement*>(sink), "sink");
-  g_assert(pad);
-  const GstCaps * caps  = gst_pad_get_current_caps(pad);
+  const GstCaps * caps  = gst_pad_get_current_caps (pad);
+  // print_caps(caps, "    ");
   GstStructure * structure = gst_caps_get_structure (caps, 0);
   gint height = 0;
   gint width = 0;
-  const char* format = gst_structure_get_string(structure, "format");
-  if (!format) {
-    g_print("No format available\n");
-    print_caps(caps, "    ");
-    return GST_FLOW_ERROR;
-  }
-
   if (!gst_structure_get_int (structure, "width", &width) ||
       !gst_structure_get_int (structure, "height", &height)) {
     g_print ("No width/height available\n");
@@ -230,7 +214,7 @@ gst_rclcpp_publisher_show_frame (GstVideoSink * sink, GstBuffer * buf)
     return GST_FLOW_ERROR;
   }
   // g_print("Caps dimensions %d x %d", width, height);
-  GstPublisherNode::Publish(rclcpp_publisher->node.get(), buf, width, height, format);
+  GstCompressedPublisherNode::Publish(rclcpp_publisher->node.get(), buf, width, height);
 
   return GST_FLOW_OK;
 }
@@ -242,7 +226,7 @@ plugin_init (GstPlugin * plugin)
   /* FIXME Remember to set the rank if it's an element that is meant
      to be autoplugged by decodebin. */
   return gst_element_register (plugin, "rclcpp_publisher", GST_RANK_NONE,
-      GST_TYPE_RCLCPP_PUBLISHER);
+      GST_TYPE_RCLCPP_COMPRESSED_PUBLISHER);
 }
 
 /* FIXME: these are normally defined by the GStreamer build system.
@@ -268,35 +252,28 @@ GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
     "FIXME plugin description",
     plugin_init, VERSION, "LGPL", PACKAGE_NAME, GST_PACKAGE_ORIGIN)
 
-GstPublisherNode::GstPublisherNode(const std::string& name, const std::string& topic_name)
+GstCompressedPublisherNode::GstCompressedPublisherNode(const std::string& name, const std::string& topic_name)
 : rclcpp::Node(name), publisher_(nullptr) {
-  publisher_ = create_publisher<sensor_msgs::msg::Image>(topic_name, 1);
+  publisher_ = create_publisher<sensor_msgs::msg::CompressedImage>(topic_name, 1);
 }
 
-GstPublisherNode::~GstPublisherNode() {}
+GstCompressedPublisherNode::~GstCompressedPublisherNode() {}
 
-void GstPublisherNode::Publish(
-    GstPublisherNode* node, GstBuffer* image_buffer, size_t width, size_t height, const char* format) {
+void GstCompressedPublisherNode::Publish(
+    GstCompressedPublisherNode* node, GstBuffer* image_buffer, size_t width, size_t height) {
   GstMemory *memory = gst_buffer_get_memory(image_buffer, 0);
   GstMapInfo info;
   gst_memory_map(memory, &info, GST_MAP_READ);
   gsize &buffer_size = info.size;
   guint8 *&buffer_data = info.data;
 
-  sensor_msgs::msg::Image image;
+  sensor_msgs::msg::CompressedImage image;
   image.header.frame_id = "camera";
-  image.height = height;
-  image.width = width;
-
-  auto encoding = EncodingConversions::gst_to_ros(format);
-  if (encoding.empty()) {
-    throw std::runtime_error("Encoding conversion failed");
+  auto encoding = EncodingConversions::gst_to_ros(info.encoding);
+  if (!encoding) {
+    throw std::RuntimeException("Encoding conversion failed");
   }
-  image.encoding = encoding;
-  auto num_channels = sensor_msgs::image_encodings::numChannels(encoding);
-  auto depth = sensor_msgs::image_encodings::bitDepth(encoding) / 8;
-  image.step = width * num_channels;
-  image.data.resize(buffer_size);
+  image.format = *encoding;
 
   // g_print("Buffer size %d",  gst_buffer_get_size(image_buffer));
   size_t size = gst_buffer_get_size(image_buffer);

@@ -1,7 +1,12 @@
 #ifndef __ROS2_GSTREAMER__IMAGE_ENCODING_CONVERSIONS_HPP_
 #define __ROS2_GSTREAMER__IMAGE_ENCODING_CONVERSIONS_HPP_
 
-namespace ros_encodings {
+#include <iostream>
+#include <map>
+#include <string>
+#include <vector>
+
+namespace ros_formats {
 
 constexpr char RGB8[] = "rgb8";
 constexpr char RGBA8[] = "rgba8";
@@ -51,10 +56,14 @@ constexpr char TYPE_64FC4[] = "64FC4";
 constexpr char YUV422[] = "yuv422";
 // YUYV version: http://www.fourcc.org/pixel-format/yuv-yuy2/
 constexpr char YUV422_YUY2[] = "yuv422_yuy2";
-}
+
+constexpr char JPEG[] = "jpeg";
+constexpr char PNG[] = "png";
+}  // namespace ros_formats
 
 // https://gstreamer.freedesktop.org/documentation/additional/design/mediatype-video-raw.html?gi-language=c
 namespace gst_formats {
+
 constexpr char I420[] = "I420";
 constexpr char YV12[] = "YV12";
 constexpr char YUY2[] = "YUY2";
@@ -70,7 +79,7 @@ constexpr char RGBA[] = "RGBA";
 constexpr char BGRA[] = "BGRA";
 constexpr char ARGB[] = "ARGB";
 constexpr char ABGR[] = "ABGR";
-constexpr char RBG[] = "RGB";
+constexpr char RGB[] = "RGB";
 constexpr char BGR[] = "BGR";
 
 constexpr char Y41B[] = "Y41B";
@@ -91,63 +100,109 @@ constexpr char RGB16[] = "RGB16";
 constexpr char BGR16[] = "BGR16";
 constexpr char RGB15[] = "RGB15";
 // etc, the list goes on
-}
+
+constexpr char IMAGE_PNG[] = "image/png";
+constexpr char IMAGE_JPEG[] = "image/jpeg";
+
+}  // namespace gst_formats
 
 const std::map<std::string, std::string> ros_gst_conversions = {
-    {ros_format::RGB8, gst_format::RGB},
-    {ros_format::RGBA8, gst_format::RGBA},
-    {ros_format::BGR8, gst_format::BGR},
-    {ros_format::BGRA8, gst_format::RGBA},
-    {ros_format::MONO8, gst_format::GRAY8},
-    {ros_format::MONO16, gst_format::GRAY16},
-    {ros_format::YUV422, gst_format::UYVY},
-    {ros_format::YUV422_YUY2, gst_format::YUY2},
+    {ros_formats::RGB8, gst_formats::RGB},
+    {ros_formats::RGBA8, gst_formats::RGBA},
+    {ros_formats::BGR8, gst_formats::BGR},
+    {ros_formats::BGRA8, gst_formats::RGBA},
+    {ros_formats::MONO8, gst_formats::GRAY8},
+    {ros_formats::MONO16, gst_formats::GRAY16_BE},
+    {ros_formats::YUV422, gst_formats::UYVY},
+    {ros_formats::YUV422_YUY2, gst_formats::YUY2},
 };
 
 const std::map<std::string, std::string> gst_ros_conversions = {
-    {gst_format::RGB, ros_format::RGB8},
-    {gst_format::RGBA, ros_format::RGBA8},
-    {gst_format::BGR, ros_format::BGR8},
-    {gst_format::RGBA, ros_format::BGRA8},
-    {gst_format::GRAY8, ros_format::MONO8},
-    {gst_format::GRAY16, ros_format::MONO16},
-    {gst_format::UYVY, ros_format::YUV422},
-    {gst_format::YUY2, ros_format::YUV422_YUY2},
+    {gst_formats::RGB, ros_formats::RGB8},
+    {gst_formats::RGBA, ros_formats::RGBA8},
+    {gst_formats::BGR, ros_formats::BGR8},
+    {gst_formats::RGBA, ros_formats::BGRA8},
+    {gst_formats::GRAY8, ros_formats::MONO8},
+    {gst_formats::GRAY16_BE, ros_formats::MONO16},
+    {gst_formats::GRAY16_LE, ros_formats::MONO16},
+    {gst_formats::UYVY, ros_formats::YUV422},
+    {gst_formats::YUY2, ros_formats::YUV422_YUY2},
 };
+
+const std::map<std::string, std::string> gst_ros_compressed_conversions = {
+  {gst_formats::IMAGE_PNG, ros_formats::PNG},
+  {gst_formats::IMAGE_JPEG, ros_formats::JPEG},
+};
+
+const std::map<std::string, std::string> ros_gst_compressed_conversions = {
+  {ros_formats::PNG, gst_formats::IMAGE_PNG},
+  {ros_formats::JPEG, gst_formats::IMAGE_JPEG},
+};
+
 
 class EncodingConversions {
 public:
   static std::vector<std::string> supported_gst_encodings() {
-    std::vector<std::string> encodings(gst_ros_conversions.size());
+    std::vector<std::string> encodings;
     for (auto entry : gst_ros_conversions) {
-      encodings.push_back(entry.first);
+      encodings.push_back(entry.first.c_str());
     }
     return encodings;
   }
 
   static std::vector<std::string> supported_ros_encodings() {
-    std::vector<std::string> encodings(ros_gst_encodings.size());
-    for (auto entry : ros_gst_encodings) {
-      encodings.push_back(entry.first);
+    std::vector<std::string> encodings;
+    for (auto entry : ros_gst_conversions) {
+      encodings.push_back(entry.first.c_str());
     }
     return encodings;
   }
 
-  static std::optional<std::string> gst_to_ros(const std::string& gst_format) {
-    auto result = gst_ros_conversions.find(gst_format);
-    if (result == gst_ros_conversions.end()) {
-      return {};
-    }
-    return *result;
+  static std::vector<std::string> supported_gst_compressed_encodings() {
+    return {gst_formats::IMAGE_PNG, gst_formats::IMAGE_JPEG};
   }
 
-  static std::optional<std::string> ros_to_gst(const std::string& ros_format) {
-    auto result = ros_gst_conversions.find(ros_format);
-    if (result == ros_gst_conversions.end()) {
-      return {};
-    }
-    return *result;
+  static std::vector<std::string> supported_ros_compressed_encodings() {
+    return {ros_formats::PNG, ros_formats::JPEG};
   }
-}
+
+  static std::string gst_to_ros(std::string gst_format) {
+    auto result = gst_ros_conversions.find(gst_format);
+    if (result != gst_ros_conversions.end()) {
+      return result->second;
+    }
+
+    auto compressed_result = gst_ros_compressed_conversions.find(gst_format);
+    if (compressed_result != gst_ros_compressed_conversions.end()) {
+      return result->second;
+    }
+
+    std::cout << "GST format '" << gst_format << "' not found." << std::endl;
+    for (auto entry : gst_ros_conversions) {
+      std::cout << "\t" << entry.first << " -> " << entry.second << std::endl;
+    }
+
+    return "";
+  }
+
+  static std::string ros_to_gst(std::string ros_format) {
+    auto result = ros_gst_conversions.find(ros_format);
+    if (result != ros_gst_conversions.end()) {
+      return result->second;
+    }
+
+    auto compressed_result = ros_gst_compressed_conversions.find(ros_format);
+    if (compressed_result != ros_gst_compressed_conversions.end()) {
+      return result->second;
+    }
+
+    std::cout << "ROS format '" << ros_format << "' not found." << std::endl;
+    for (auto entry : ros_gst_conversions) {
+      std::cout << "\t" << entry.first << " -> " << entry.second << std::endl;
+    }
+
+    return "";
+  }
+};
 
 #endif  // __ROS2_GSTREAMER__IMAGE_ENCODING_CONVERSIONS_HPP_

@@ -20,6 +20,7 @@
 #ifndef _GST_RCLCPP_PUBLISHER_H_
 #define _GST_RCLCPP_PUBLISHER_H_
 
+#include <gst/gst.h>
 #include <gst/video/video.h>
 #include <gst/video/gstvideosink.h>
 
@@ -41,7 +42,7 @@ public:
   GstPublisherNode(const std::string& name, const std::string& topic_name);
   ~GstPublisherNode();
 
-  static void Publish(GstPublisherNode* node, GstBuffer* image_buffer, size_t width, size_t height);
+  static void Publish(GstPublisherNode* node, GstBuffer* image_buffer, size_t width, size_t height, const char* format);
 
   std::shared_ptr<rclcpp::Publisher<sensor_msgs::msg::Image>> publisher_;
 };
