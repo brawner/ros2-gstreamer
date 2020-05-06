@@ -25,6 +25,7 @@
 #include <memory>
 #include <queue>
 #include "rclcpp/rclcpp.hpp"
+#include "image_transport/image_transport.h"
 #include "sensor_msgs/msg/image.hpp"
 
 G_BEGIN_DECLS
@@ -36,17 +37,24 @@ G_BEGIN_DECLS
 #define GST_IS_RCLCPP_SUBSCRIBER_CLASS(obj)   (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_RCLCPP_SUBSCRIBER))
 
 
+enum class CapsState: int {
+  UNITIALIZED = 0,
+  DUMMY_CAPS = 1,
+  INITIALIZED = 2,
+};
+
 class GstSubscriberNode : public rclcpp::Node {
 public:
   GstSubscriberNode(const std::string& name,
-                    const std::string& topic_name,
-                    std::shared_ptr<std::queue<sensor_msgs::msg::Image::SharedPtr>> queue);
+                    std::shared_ptr<std::queue<sensor_msgs::msg::Image::ConstSharedPtr>> queue);
   ~GstSubscriberNode();
 
-  void on_image(const sensor_msgs::msg::Image::SharedPtr msg);
+  void set_topic_name(const std::string& topic_name);
+  void on_image(const sensor_msgs::msg::Image::ConstSharedPtr& msg);
 
-  std::shared_ptr<rclcpp::Subscription<sensor_msgs::msg::Image>> subscriber_;
-  std::shared_ptr<std::queue<sensor_msgs::msg::Image::SharedPtr>> queue_;
+  image_transport::Subscriber subscriber_;
+  std::shared_ptr<std::queue<sensor_msgs::msg::Image::ConstSharedPtr>> queue_;
+  rclcpp::Time prev_time_;
 };
 
 typedef struct _GstRclcppSubscriber GstRclcppSubscriber;
@@ -55,9 +63,12 @@ typedef struct _GstRclcppSubscriberClass GstRclcppSubscriberClass;
 struct _GstRclcppSubscriber
 {
   GstPushSrc base_rclcppsubscriber;
-  std::shared_ptr<std::queue<sensor_msgs::msg::Image::SharedPtr>> queue;
+  std::shared_ptr<std::queue<sensor_msgs::msg::Image::ConstSharedPtr>> queue;
   std::shared_ptr<GstSubscriberNode> node;
-  bool initialized_caps;
+  CapsState initialized_caps;
+
+  std::string node_name;
+  std::string topic_name;
 };
 
 struct _GstRclcppSubscriberClass

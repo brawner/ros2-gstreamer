@@ -56,13 +56,22 @@ static void gst_rclcpp_publisher_get_property (GObject * object,
     guint property_id, GValue * value, GParamSpec * pspec);
 static void gst_rclcpp_publisher_dispose (GObject * object);
 static void gst_rclcpp_publisher_finalize (GObject * object);
+static void gst_rclcpp_publisher_set_node_name(GstRclcppPublisher* rclcpp_publisher,
+                                               const GValue* value);
+static void gst_rclcpp_publisher_set_topic_name(GstRclcppPublisher* rclcpp_publisher,
+                                                const GValue* value);
+static void gst_rclcpp_publisher_set_frame_id(GstRclcppPublisher* rclcpp_publisher,
+                                              const GValue* value);
 
 static GstFlowReturn gst_rclcpp_publisher_show_frame (GstVideoSink * video_sink,
     GstBuffer * buf);
 
 enum
 {
-  PROP_0
+  PROP_UNDEFINED,
+  PROP_NODE_NAME,
+  PROP_TOPIC_NAME,
+  PROP_IMAGE_FRAME_ID,
 };
 
 /* pad templates */
@@ -94,7 +103,7 @@ gst_rclcpp_publisher_class_init (GstRclcppPublisherClass * klass)
     }
   }
   ss << "}";
-  std::cout << "Creating caps with template: " << ss.str() << std::endl;
+  // std::cout << "Creating caps with template: " << ss.str() << std::endl;
   /* Setting up pads and setting metadata should be moved to
      base_class_init if you intend to subclass this class. */
   auto caps = gst_caps_from_string(ss.str().c_str());
@@ -109,14 +118,70 @@ gst_rclcpp_publisher_class_init (GstRclcppPublisherClass * klass)
   gobject_class->get_property = gst_rclcpp_publisher_get_property;
   gobject_class->dispose = gst_rclcpp_publisher_dispose;
   gobject_class->finalize = gst_rclcpp_publisher_finalize;
-  video_sink_class->show_frame = GST_DEBUG_FUNCPTR (gst_rclcpp_publisher_show_frame);
+  video_sink_class->show_frame = gst_rclcpp_publisher_show_frame;
+
+  g_object_class_install_property (gobject_class, PROP_NODE_NAME,
+    g_param_spec_string ("node-name", "Node Name",
+              "Name of the rclcpp publisher node (default = gst_publisher)",
+              "gst_publisher", static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (gobject_class, PROP_TOPIC_NAME,
+    g_param_spec_string ("topic-name", "Topic Name",
+              "Name of rclcpp topic (default = image)",
+              "image", static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property (gobject_class, PROP_IMAGE_FRAME_ID,
+    g_param_spec_string ("image-frame-id", "Image Frame ID",
+              "Name of frame id to set for image (default = gst-image)",
+              "gst-image", static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 }
 
 static void
 gst_rclcpp_publisher_init (GstRclcppPublisher *rclcpp_publisher)
 {
+  std::cout << "Initializing rclcpp node" << std::endl;
   rclcpp::init(0, nullptr);
-  rclcpp_publisher->node = std::make_unique<GstPublisherNode>("gst_publisher", "image");
+  rclcpp_publisher->node_name = "gst_publisher";
+  rclcpp_publisher->topic_name = "image";
+  rclcpp_publisher->image_frame_id = "gst-image";
+
+  // Setup and initialize default node
+  rclcpp_publisher->node = std::make_unique<GstPublisherNode>(
+    rclcpp_publisher->node_name);
+  rclcpp_publisher->node->set_topic_name(rclcpp_publisher->topic_name);
+  rclcpp_publisher->node->set_frame_id(rclcpp_publisher->image_frame_id);
+}
+
+void gst_rclcpp_publisher_set_node_name(GstRclcppPublisher* rclcpp_publisher, const GValue *value) {
+  g_assert(value);
+  auto node_name_str = g_value_get_string(value);
+  g_assert(node_name_str);
+  g_assert(node_name_str[0] != '\0');
+  g_assert(rclcpp_publisher->node);
+  rclcpp_publisher->node_name = node_name_str;
+
+  // Destroying old node, creating new one with new name
+  rclcpp_publisher->node =
+    std::make_unique<GstPublisherNode>(rclcpp_publisher->node_name);
+  rclcpp_publisher->node->set_topic_name(rclcpp_publisher->topic_name);
+  rclcpp_publisher->node->set_frame_id(rclcpp_publisher->image_frame_id);
+}
+
+void gst_rclcpp_publisher_set_topic_name(GstRclcppPublisher* rclcpp_publisher, const GValue * value) {
+  g_assert(value);
+  auto topic_name_str = g_value_get_string(value);
+  g_assert(topic_name_str);
+  g_assert(topic_name_str[0] != '\0');
+  g_assert(rclcpp_publisher->node);
+  rclcpp_publisher->node->set_topic_name(topic_name_str);
+}
+
+void gst_rclcpp_publisher_set_frame_id(GstRclcppPublisher* rclcpp_publisher, const GValue * value) {
+  g_assert(value);
+  auto frame_id_str = g_value_get_string(value);
+  g_assert(frame_id_str);
+  g_assert(frame_id_str[0] != '\0');
+  rclcpp_publisher->image_frame_id = frame_id_str;
+  rclcpp_publisher->node->base_image_.header.frame_id = rclcpp_publisher->image_frame_id;
 }
 
 void
@@ -124,10 +189,17 @@ gst_rclcpp_publisher_set_property (GObject * object, guint property_id,
     const GValue * value, GParamSpec * pspec)
 {
   GstRclcppPublisher *rclcpp_publisher = GST_RCLCPP_PUBLISHER (object);
-
-  GST_DEBUG_OBJECT (rclcpp_publisher, "set_property");
-
+  g_assert(value);
   switch (property_id) {
+    case PROP_NODE_NAME:
+      gst_rclcpp_publisher_set_node_name(rclcpp_publisher, value);
+      break;
+    case PROP_TOPIC_NAME:
+      gst_rclcpp_publisher_set_topic_name(rclcpp_publisher, value);
+      break;
+    case PROP_IMAGE_FRAME_ID:
+      gst_rclcpp_publisher_set_frame_id(rclcpp_publisher, value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
       break;
@@ -143,6 +215,15 @@ gst_rclcpp_publisher_get_property (GObject * object, guint property_id,
   GST_DEBUG_OBJECT (rclcpp_publisher, "get_property");
 
   switch (property_id) {
+    case PROP_NODE_NAME:
+      g_value_set_string(value, rclcpp_publisher->node_name.c_str());
+      break;
+    case PROP_TOPIC_NAME:
+      g_value_set_string(value, rclcpp_publisher->topic_name.c_str());
+      break;
+    case PROP_IMAGE_FRAME_ID:
+      g_value_set_string(value, rclcpp_publisher->image_frame_id.c_str());
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
       break;
@@ -207,15 +288,21 @@ gst_rclcpp_publisher_finalize (GObject * object)
 static GstFlowReturn
 gst_rclcpp_publisher_show_frame (GstVideoSink * sink, GstBuffer * buf)
 {
+  auto start = std::chrono::steady_clock::now();
   GstRclcppPublisher *rclcpp_publisher = GST_RCLCPP_PUBLISHER (sink);
+  GstClock* gst_clock = gst_element_get_clock(&sink->element.element);
+  GstClockTime gst_nanoseconds = gst_clock_get_time(gst_clock);
+  int diff = static_cast<int>(gst_nanoseconds) - static_cast<int>(rclcpp_publisher->prev_time_);
+  rclcpp_publisher->prev_time_ = gst_nanoseconds;
+  // std::cout << "Diff: " << diff /1000 << std::endl;
+  if (rclcpp_publisher->gst_sync_time == 0) {
+    rclcpp_publisher->gst_sync_time = gst_nanoseconds;
+    rclcpp_publisher->rclcpp_sync_time = rclcpp_publisher->node->now();
+  }
 
-  GST_DEBUG_OBJECT (rclcpp_publisher, "show_frame");
-  GstPad * pad = gst_element_get_static_pad (reinterpret_cast<GstElement*>(sink), "sink");
-  g_assert(pad);
-  const GstCaps * caps  = gst_pad_get_current_caps(pad);
+  const GstCaps * caps  = gst_pad_get_current_caps(sink->element.sinkpad);
   GstStructure * structure = gst_caps_get_structure (caps, 0);
-  gint height = 0;
-  gint width = 0;
+
   const char* format = gst_structure_get_string(structure, "format");
   if (!format) {
     g_print("No format available\n");
@@ -223,24 +310,29 @@ gst_rclcpp_publisher_show_frame (GstVideoSink * sink, GstBuffer * buf)
     return GST_FLOW_ERROR;
   }
 
+  gint height = 0;
+  gint width = 0;
+
   if (!gst_structure_get_int (structure, "width", &width) ||
       !gst_structure_get_int (structure, "height", &height)) {
     g_print ("No width/height available\n");
     print_caps(caps, "    ");
     return GST_FLOW_ERROR;
   }
-  // g_print("Caps dimensions %d x %d", width, height);
-  GstPublisherNode::Publish(rclcpp_publisher->node.get(), buf, width, height, format);
 
+  size_t gst_time_diff_ns = gst_nanoseconds - rclcpp_publisher->gst_sync_time;
+  auto rclcpp_now = rclcpp_publisher->rclcpp_sync_time + rclcpp::Duration(gst_time_diff_ns);
+  GstPublisherNode::Publish(rclcpp_publisher->node.get(), buf, width, height, format, rclcpp_now);
+  auto end = std::chrono::steady_clock::now();
+  // std::cout << "Show frame: "
+  //           << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()
+  //           << "us" << std::endl;
   return GST_FLOW_OK;
 }
 
 static gboolean
 plugin_init (GstPlugin * plugin)
 {
-
-  /* FIXME Remember to set the rank if it's an element that is meant
-     to be autoplugged by decodebin. */
   return gst_element_register (plugin, "rclcpp_publisher", GST_RANK_NONE,
       GST_TYPE_RCLCPP_PUBLISHER);
 }
@@ -268,42 +360,68 @@ GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
     "FIXME plugin description",
     plugin_init, VERSION, "LGPL", PACKAGE_NAME, GST_PACKAGE_ORIGIN)
 
-GstPublisherNode::GstPublisherNode(const std::string& name, const std::string& topic_name)
-: rclcpp::Node(name), publisher_(nullptr) {
-  publisher_ = create_publisher<sensor_msgs::msg::Image>(topic_name, 1);
-}
+GstPublisherNode::GstPublisherNode(const std::string& name)
+: rclcpp::Node(name) {}
 
 GstPublisherNode::~GstPublisherNode() {}
 
+void GstPublisherNode::set_topic_name(const std::string& topic_name) {
+  publisher_ = image_transport::create_publisher(this, topic_name);
+}
+
+void GstPublisherNode::set_frame_id(const std::string& frame_id) {
+  base_image_.header.frame_id = frame_id;
+}
+
 void GstPublisherNode::Publish(
-    GstPublisherNode* node, GstBuffer* image_buffer, size_t width, size_t height, const char* format) {
-  GstMemory *memory = gst_buffer_get_memory(image_buffer, 0);
+    GstPublisherNode* node, GstBuffer* image_buffer, size_t width,
+    size_t height, const char* format, rclcpp::Time rclcpp_time_stamp) {
+  auto start = std::chrono::steady_clock::now();
   GstMapInfo info;
-  gst_memory_map(memory, &info, GST_MAP_READ);
-  gsize &buffer_size = info.size;
-  guint8 *&buffer_data = info.data;
+  g_assert(gst_buffer_map(image_buffer, &info, GST_MAP_READ));
+  auto mem_map = std::chrono::steady_clock::now();
 
-  sensor_msgs::msg::Image image;
-  image.header.frame_id = "camera";
-  image.height = height;
-  image.width = width;
+  node->base_image_.header.stamp = rclcpp_time_stamp;
 
-  auto encoding = EncodingConversions::gst_to_ros(format);
-  if (encoding.empty()) {
-    throw std::runtime_error("Encoding conversion failed");
+  if (node->base_image_.height != height
+      || node->base_image_.width != width
+      || info.size != node->buffer_size_
+      || strcmp(node->gst_format_.c_str(), format) != 0) {
+    node->base_image_.height = height;
+    node->base_image_.width = width;
+    node->gst_format_ = format;
+    node->buffer_size_ = info.size;
+    node->base_image_.data.resize(info.size);
+    node->base_image_.encoding = EncodingConversions::gst_to_ros(format);
+    g_assert(!node->base_image_.encoding.empty());
+
+    node->base_image_.step =
+      width * sensor_msgs::image_encodings::numChannels(node->base_image_.encoding);
   }
-  image.encoding = encoding;
-  auto num_channels = sensor_msgs::image_encodings::numChannels(encoding);
-  auto depth = sensor_msgs::image_encodings::bitDepth(encoding) / 8;
-  image.step = width * num_channels;
-  image.data.resize(buffer_size);
+  auto prep_image = std::chrono::steady_clock::now();
 
-  // g_print("Buffer size %d",  gst_buffer_get_size(image_buffer));
-  size_t size = gst_buffer_get_size(image_buffer);
-  memcpy(&image.data[0], buffer_data, buffer_size);
-  // g_print("Publishing image\n");
-  node->publisher_->publish(image);
-  // Clean up
-  gst_memory_unmap(memory, &info);
-  gst_memory_unref(memory);
+  auto resize = std::chrono::steady_clock::now();
+  node->base_image_.data.assign(info.data, info.data + info.size);
+  auto memcp = std::chrono::steady_clock::now();
+  gst_buffer_unmap(image_buffer, &info);
+
+  auto unref = std::chrono::steady_clock::now();
+  node->publisher_.publish(node->base_image_);
+
+  auto end = std::chrono::steady_clock::now();
+  // std::cout << "Mem map: "
+  //           <<  std::chrono::duration_cast<std::chrono::microseconds>(mem_map - start).count()
+  //           << "us\n"
+  //           << "Prep image: "
+  //           << std::chrono::duration_cast<std::chrono::microseconds>(prep_image - mem_map).count()
+  //           << "us\n"
+  //           << "Memcpy: "
+  //           << std::chrono::duration_cast<std::chrono::microseconds>(memcp - resize).count()
+  //           << "us\n"
+  //           << "Unref: "
+  //           << std::chrono::duration_cast<std::chrono::microseconds>(unref - memcp).count()
+  //           << "us\n"
+  //           << "Publish: "
+  //           << std::chrono::duration_cast<std::chrono::microseconds>(end - unref).count()
+  //           << "us" << std::endl;
 }

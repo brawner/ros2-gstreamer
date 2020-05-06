@@ -26,6 +26,7 @@
 
 #include <memory>
 #include "rclcpp/rclcpp.hpp"
+#include "image_transport/image_transport.h"
 #include "sensor_msgs/msg/image.hpp"
 
 G_BEGIN_DECLS
@@ -39,12 +40,18 @@ G_BEGIN_DECLS
 
 class GstPublisherNode : public rclcpp::Node {
 public:
-  GstPublisherNode(const std::string& name, const std::string& topic_name);
+  GstPublisherNode(const std::string& name);
   ~GstPublisherNode();
 
-  static void Publish(GstPublisherNode* node, GstBuffer* image_buffer, size_t width, size_t height, const char* format);
+  void set_topic_name(const std::string& topic_name);
+  void set_frame_id(const std::string& image_frame_id);
+  static void Publish(GstPublisherNode* node, GstBuffer* image_buffer,
+    size_t width, size_t height, const char* format, rclcpp::Time rclcpp_time_stamp);
 
-  std::shared_ptr<rclcpp::Publisher<sensor_msgs::msg::Image>> publisher_;
+  image_transport::Publisher publisher_;
+  size_t buffer_size_;
+  sensor_msgs::msg::Image base_image_;
+  std::string gst_format_;
 };
 
 typedef struct _GstRclcppPublisher GstRclcppPublisher;
@@ -54,6 +61,13 @@ struct _GstRclcppPublisher
 {
   GstVideoSink base_rclcpppublisher;
   std::unique_ptr<GstPublisherNode> node;
+  GstClockTime gst_sync_time;
+  GstClockTime prev_time_;
+  rclcpp::Time rclcpp_sync_time;
+
+  std::string node_name;
+  std::string topic_name;
+  std::string image_frame_id;
 };
 
 struct _GstRclcppPublisherClass

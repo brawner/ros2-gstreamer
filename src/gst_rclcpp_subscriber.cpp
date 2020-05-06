@@ -37,6 +37,7 @@
 #include <sstream>
 
 #include <gst/gst.h>
+#include <gst/gstclock.h>
 #include <gst/base/gstpushsrc.h>
 #include "rclcpp_gstreamer/gst_rclcpp_subscriber.h"
 #include "rclcpp_gstreamer/image_encoding_conversions.hpp"
@@ -53,7 +54,10 @@ static void gst_rclcpp_subscriber_get_property (GObject * object,
     guint property_id, GValue * value, GParamSpec * pspec);
 static void gst_rclcpp_subscriber_dispose (GObject * object);
 static void gst_rclcpp_subscriber_finalize (GObject * object);
-
+static void rclcpp_subscriber_set_node_name(GstRclcppSubscriber *rclcpp_subscriber,
+                                            const GValue* node_name_value);
+static void rclcpp_subscriber_set_topic_name(GstRclcppSubscriber *rclcpp_subscriber,
+                                             const GValue* topic_value);
 // static GstCaps *gst_rclcpp_subscriber_get_caps (GstPushSrc * src, GstCaps * filter);
 // static gboolean gst_rclcpp_subscriber_negotiate (GstPushSrc * src);
 static GstCaps *gst_rclcpp_subscriber_fixate (GstBaseSrc * src, GstCaps * caps);
@@ -81,7 +85,9 @@ static GstFlowReturn gst_rclcpp_subscriber_fill (GstPushSrc * src, GstBuffer * b
 
 enum
 {
-  PROP_0
+  PROP_UNDEFINED,
+  PROP_NODE_NAME,
+  PROP_TOPIC_NAME,
 };
 
 const std::string construct_caps_str() {
@@ -157,6 +163,15 @@ gst_rclcpp_subscriber_class_init (GstRclcppSubscriberClass * klass)
 
   push_src_class->fill =  GST_DEBUG_FUNCPTR (gst_rclcpp_subscriber_fill);
 
+  g_object_class_install_property (gobject_class, PROP_NODE_NAME,
+    g_param_spec_string ("node-name", "Node Name",
+              "Name of the rclcpp publisher node (default = gst_publisher)",
+              "gst_publisher", static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (gobject_class, PROP_TOPIC_NAME,
+    g_param_spec_string ("topic-name", "Topic Name",
+              "Name of rclcpp topic (default = image)",
+              "image", static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
 }
 
@@ -164,28 +179,61 @@ static void
 gst_rclcpp_subscriber_init (GstRclcppSubscriber *rclcpp_subscriber)
 {
   rclcpp::init(0, nullptr);
-  rclcpp_subscriber->queue = std::make_shared<std::queue<sensor_msgs::msg::Image::SharedPtr>>();
-  rclcpp_subscriber->node =
-    std::make_shared<GstSubscriberNode>("gst_subscriber", "image", rclcpp_subscriber->queue);
-  rclcpp_subscriber->initialized_caps = FALSE;
+  rclcpp_subscriber->queue = std::make_shared<std::queue<sensor_msgs::msg::Image::ConstSharedPtr>>();
+  rclcpp_subscriber->node = nullptr;
+  rclcpp_subscriber->topic_name = "image";
+  rclcpp_subscriber->initialized_caps = CapsState::UNITIALIZED;
   auto* base_push_src = &rclcpp_subscriber->base_rclcppsubscriber.parent;
   gst_pad_activate_mode (base_push_src->srcpad, GST_PAD_MODE_PUSH, TRUE);
   base_push_src->is_live = TRUE;
   base_push_src->random_access = FALSE;
   base_push_src->can_activate_push = TRUE;
   gst_pad_use_fixed_caps(base_push_src->srcpad);
+
+  // Create node with default name and topic name
+  rclcpp_subscriber->node =
+    std::make_shared<GstSubscriberNode>("gst_publisher", rclcpp_subscriber->queue);
+  rclcpp_subscriber->node->set_topic_name(rclcpp_subscriber->topic_name);
+}
+
+void rclcpp_subscriber_set_node_name(GstRclcppSubscriber *rclcpp_subscriber, const GValue* node_name_value) {
+  g_assert(node_name_value);
+  auto node_name = g_value_get_string(node_name_value);
+  g_assert(node_name);
+  g_assert(node_name[0] != '\0');
+
+  std::cout << "Creating subscriber node with name: " << node_name << std::endl;
+  rclcpp_subscriber->node =
+    std::make_shared<GstSubscriberNode>(node_name, rclcpp_subscriber->queue);
+  rclcpp_subscriber->node->set_topic_name(rclcpp_subscriber->topic_name);
+}
+
+void rclcpp_subscriber_set_topic_name(GstRclcppSubscriber *rclcpp_subscriber,
+                                      const GValue* topic_value) {
+  g_assert(topic_value);
+  auto topic_str = g_value_get_string(topic_value);
+  g_assert(topic_str);
+  g_assert(topic_str[0] != '\0');
+  g_assert(rclcpp_subscriber->node);
+  std::cout << "Subscribing to topic name: " << topic_str << std::endl;
+  rclcpp_subscriber->topic_name = topic_str;
+  rclcpp_subscriber->node->set_topic_name(rclcpp_subscriber->topic_name);
 }
 
 void
 gst_rclcpp_subscriber_set_property (GObject * object, guint property_id,
     const GValue * value, GParamSpec * pspec)
 {
-  (void*)value;
   GstRclcppSubscriber *rclcpp_subscriber = GST_RCLCPP_SUBSCRIBER (object);
 
   GST_DEBUG_OBJECT (rclcpp_subscriber, "set_property");
-
   switch (property_id) {
+    case PROP_NODE_NAME:
+      rclcpp_subscriber_set_node_name(rclcpp_subscriber, value);
+      break;
+    case PROP_TOPIC_NAME:
+      rclcpp_subscriber_set_topic_name(rclcpp_subscriber, value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
       break;
@@ -196,12 +244,17 @@ void
 gst_rclcpp_subscriber_get_property (GObject * object, guint property_id,
     GValue * value, GParamSpec * pspec)
 {
-  (void*)value;
   GstRclcppSubscriber *rclcpp_subscriber = GST_RCLCPP_SUBSCRIBER (object);
 
   GST_DEBUG_OBJECT (rclcpp_subscriber, "get_property");
 
   switch (property_id) {
+    case PROP_NODE_NAME:
+      g_value_set_string(value, rclcpp_subscriber->node_name.c_str());
+      break;
+    case PROP_TOPIC_NAME:
+      g_value_set_string(value, rclcpp_subscriber->topic_name.c_str());
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
       break;
@@ -326,30 +379,10 @@ static GstCaps *
 gst_rclcpp_subscriber_fixate (GstBaseSrc * src, GstCaps * caps)
 {
   GstRclcppSubscriber *rclcpp_subscriber = GST_RCLCPP_SUBSCRIBER (src);
+  std::cout << "Initialized?: " << static_cast<int>(rclcpp_subscriber->initialized_caps) << std::endl;
   GstCaps* new_caps = nullptr;
-  if (rclcpp_subscriber->queue->empty() && rclcpp_subscriber->initialized_caps) {
-    // Don't mess with me
-    rclcpp_subscriber->initialized_caps = TRUE;
-    return caps;
-  } else if (rclcpp_subscriber->queue->empty()) {
-    std::cout << "No image yet, setting dummy caps" << std::endl
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    rclcpp::spin_some(rclcpp_subscriber->node);
-    new_caps = gst_caps_new_simple ("video/x-raw",
-       "format", G_TYPE_STRING, "RGBA",
-       "framerate", GST_TYPE_FRACTION, 1, 1,
-       "width", G_TYPE_INT, 640,
-       "height", G_TYPE_INT, 480,
-       "channels", G_TYPE_INT, 4,
-       NULL);
-       rclcpp_subscriber->initialized_caps = TRUE;
-       new_caps = GST_BASE_SRC_CLASS (gst_rclcpp_subscriber_parent_class)->fixate (src, new_caps);
-       return new_caps;
-  }
-  auto image = rclcpp_subscriber->queue->front();
-    if (!image) {
-      return NULL;
-    }
+  if (!rclcpp_subscriber->queue->empty()) {
+    auto image = rclcpp_subscriber->queue->front();
 
     gint width = 0;
     gint height = 0;
@@ -364,18 +397,39 @@ gst_rclcpp_subscriber_fixate (GstBaseSrc * src, GstCaps * caps)
        "height", G_TYPE_INT, height,
        "channels", G_TYPE_INT, channels,
        NULL);
-    rclcpp_subscriber->initialized_caps = TRUE;
+    rclcpp_subscriber->initialized_caps = CapsState::INITIALIZED;
 
 
-  // gst_rclcpp_subscriber_set_caps(caps, width, height, encoding.c_str(), channels);
-  // gst_structure_fixate_field_nearest_fraction(structure, "framerate", 30, 1);
-  std::cout << "Setting caps: " << std::endl;
-  g_assert(new_caps);
-  print_caps(new_caps, "    ");
-  GST_DEBUG_OBJECT (rclcpp_subscriber, "fixate");
-  new_caps = GST_BASE_SRC_CLASS (gst_rclcpp_subscriber_parent_class)->fixate (src, new_caps);
+    // gst_rclcpp_subscriber_set_caps(caps, width, height, encoding.c_str(), channels);
+    // gst_structure_fixate_field_nearest_fraction(structure, "framerate", 30, 1);
+    std::cout << "Setting caps: " << std::endl;
+    g_assert(new_caps);
+    print_caps(new_caps, "    ");
+    GST_DEBUG_OBJECT (rclcpp_subscriber, "fixate");
+    new_caps = GST_BASE_SRC_CLASS (gst_rclcpp_subscriber_parent_class)->fixate (src, new_caps);
 
-  return new_caps;
+    return new_caps;
+  } else if (rclcpp_subscriber->queue->empty()
+      && rclcpp_subscriber->initialized_caps != CapsState::INITIALIZED) {
+    std::cout << "No image yet, setting dummy caps" << std::endl;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    rclcpp::spin_some(rclcpp_subscriber->node);
+    new_caps = gst_caps_new_simple ("video/x-raw",
+       "format", G_TYPE_STRING, "RGBA",
+       "framerate", GST_TYPE_FRACTION, 1, 1,
+       "width", G_TYPE_INT, 640,
+       "height", G_TYPE_INT, 480,
+       "channels", G_TYPE_INT, 4,
+       NULL);
+       rclcpp_subscriber->initialized_caps = CapsState::DUMMY_CAPS;
+       return GST_BASE_SRC_CLASS (gst_rclcpp_subscriber_parent_class)->fixate (src, new_caps);
+  } else  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    rclcpp::spin_some(rclcpp_subscriber->node);
+    return caps;
+  }
+  g_assert(FALSE);
+  return nullptr;
 }
 //
 // /* notify the subclass of new caps */
@@ -615,31 +669,43 @@ static GstFlowReturn
 gst_rclcpp_subscriber_fill (GstPushSrc * src, GstBuffer * buf)
 {
   GstRclcppSubscriber *rclcpp_subscriber = GST_RCLCPP_SUBSCRIBER (src);
-  if (rclcpp_subscriber->queue->empty()) {
+  while (rclcpp_subscriber->queue->empty()) {
     rclcpp::spin_some(rclcpp_subscriber->node);
+    g_print("No image, spinning\n");
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    return GST_FLOW_OK;
+    //return GST_FLOW_OK;
   }
 
   auto image = rclcpp_subscriber->queue->front();
-  rclcpp_subscriber->queue->pop();
   if (gst_rclcpp_subscriber_need_updated_caps(rclcpp_subscriber, *image)) {
     std::cout << "Incoming image different than negotiated caps, updating" << std::endl;
     if (!gst_rclcpp_subscriber_update_caps(rclcpp_subscriber, *image)) {
+      g_print("Updating caps failed\n");
       return GST_FLOW_ERROR;
     }
     gst_pad_send_event (GST_BASE_SRC (src)->srcpad,
         gst_event_new_reconfigure ());
     return GST_FLOW_OK;
   }
+  rclcpp_subscriber->queue->pop();
 
   GstMapInfo minfo;
   gst_buffer_map (buf, &minfo, GST_MAP_WRITE);
   if (image->data.size() != minfo.size) {
     std::cerr << "Incoming buffer doesn't match image size. "
-              << image->data.size() << " != " << minfo.size << std::endl;
+              << image->data.size() << " != " << minfo.size << " max size: " << minfo.maxsize << std::endl;
+    if (!gst_rclcpp_subscriber_update_caps(rclcpp_subscriber, *image)) {
+      g_print("Updating caps failed\n");
+      return GST_FLOW_ERROR;
+    }
+    gst_pad_send_event (GST_BASE_SRC (src)->srcpad,
+        gst_event_new_reconfigure ());
     return GST_FLOW_OK;
   }
+  size_t timestamp = ((image->header.stamp.sec * 1000000000u) % 1000) + image->header.stamp.nanosec;
+  buf->pts = timestamp;//image->header.stamp.nanosec;
+  buf->dts = GST_CLOCK_TIME_NONE;// image->header.stamp.nanosec;
+  buf->duration = GST_CLOCK_TIME_NONE;
   memcpy(minfo.data, &image->data[0], image->data.size());
   //gst_buffer_fill(buf, 0, &image->data[0], (int) minfo.size);
   GST_DEBUG_OBJECT (rclcpp_subscriber, "fill");
@@ -682,17 +748,25 @@ GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
     plugin_init, VERSION, "LGPL", PACKAGE_NAME, GST_PACKAGE_ORIGIN)
 
 GstSubscriberNode::GstSubscriberNode(
-  const std::string& name, const std::string& topic_name, std::shared_ptr<std::queue<sensor_msgs::msg::Image::SharedPtr>> queue)
-: rclcpp::Node(name), subscriber_(nullptr), queue_(queue) {
-  std::cout << "Subscribing to topic: " << topic_name << std::endl;
-  subscriber_ = create_subscription<sensor_msgs::msg::Image>(topic_name, 1, std::bind(&GstSubscriberNode::on_image, this, std::placeholders::_1));
-}
+  const std::string& name, std::shared_ptr<std::queue<sensor_msgs::msg::Image::ConstSharedPtr>> queue)
+: rclcpp::Node(name),  queue_(queue) {}
 
 GstSubscriberNode::~GstSubscriberNode() {}
 
-void GstSubscriberNode::on_image(const sensor_msgs::msg::Image::SharedPtr msg) {
+void GstSubscriberNode::set_topic_name(const std::string& topic_name) {
+  std::cout << "Subscribing to topic: " << topic_name << std::endl;
+  subscriber_ = image_transport::create_subscription(
+    this, topic_name, std::bind(&GstSubscriberNode::on_image, this, std::placeholders::_1), "raw");
+}
+
+void GstSubscriberNode::on_image(const sensor_msgs::msg::Image::ConstSharedPtr& msg) {
   while(queue_->size() > 1) {
+    g_print("Dropping frames, maybe increase framerate?");
     queue_->pop();
   }
+  auto now = rclcpp::Time(msg->header.stamp.sec, msg->header.stamp.nanosec);
+  auto diff = now - prev_time_;
+  // std::cout << "Diff: " << diff.nanoseconds()/1000 << std::endl;
+  prev_time_ = now;
   queue_->push(msg);
 }

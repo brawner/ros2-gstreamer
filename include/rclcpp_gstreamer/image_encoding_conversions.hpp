@@ -112,7 +112,9 @@ const std::map<std::string, std::string> ros_gst_conversions = {
     {ros_formats::BGR8, gst_formats::BGR},
     {ros_formats::BGRA8, gst_formats::RGBA},
     {ros_formats::MONO8, gst_formats::GRAY8},
-    {ros_formats::MONO16, gst_formats::GRAY16_BE},
+    {ros_formats::TYPE_8UC1, gst_formats::GRAY8},
+    {ros_formats::MONO16, gst_formats::GRAY16_LE},
+    {ros_formats::TYPE_16UC1, gst_formats::GRAY16_LE},
     {ros_formats::YUV422, gst_formats::UYVY},
     {ros_formats::YUV422_YUY2, gst_formats::YUY2},
 };
@@ -147,6 +149,8 @@ public:
     for (auto entry : gst_ros_conversions) {
       encodings.push_back(entry.first.c_str());
     }
+    // encodings.push_back(gst_formats::IMAGE_PNG);
+    // encodings.push_back(gst_formats::IMAGE_JPEG);
     return encodings;
   }
 
@@ -155,6 +159,8 @@ public:
     for (auto entry : ros_gst_conversions) {
       encodings.push_back(entry.first.c_str());
     }
+    // encodings.push_back(ros_formats::PNG);
+    // encodings.push_back(ros_formats::JPEG);
     return encodings;
   }
 

@@ -12,6 +12,7 @@ endif()
 
 find_package(ament_cmake_ros REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(image_transport REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
 find_package(PkgConfig REQUIRED)
@@ -32,6 +33,7 @@ include_directories(
   ${GSTREAMER-FFT_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}
   include
+  ${image_transport_INCLUDE_DIRS}
 )
 
 set(all_gstreamer_libraries
@@ -42,7 +44,7 @@ set(all_gstreamer_libraries
   ${GSTREAMER-FFT_LIBRARIES}
 )
 
-set(plugin_dependencies rclcpp sensor_msgs)
+set(plugin_dependencies rclcpp image_transport sensor_msgs)
 
 add_library(rclcpp_publisher src/gst_rclcpp_publisher.cpp)
 target_link_libraries(rclcpp_publisher ${all_gstreamer_libraries})
