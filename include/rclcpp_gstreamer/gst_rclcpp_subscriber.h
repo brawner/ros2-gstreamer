@@ -24,9 +24,11 @@
 
 #include <memory>
 #include <queue>
+#include <variant>
 #include "rclcpp/rclcpp.hpp"
 #include "image_transport/image_transport.h"
 #include "sensor_msgs/msg/image.hpp"
+#include "sensor_msgs/msg/compressed_image.hpp"
 
 G_BEGIN_DECLS
 
@@ -43,17 +45,24 @@ enum class CapsState: int {
   INITIALIZED = 2,
 };
 
+using SupportedImageType =
+  std::variant<sensor_msgs::msg::Image::ConstSharedPtr,
+               sensor_msgs::msg::CompressedImage::ConstSharedPtr>;
+
 class GstSubscriberNode : public rclcpp::Node {
 public:
   GstSubscriberNode(const std::string& name,
-                    std::shared_ptr<std::queue<sensor_msgs::msg::Image::ConstSharedPtr>> queue);
+                    std::shared_ptr<std::queue<SupportedImageType>> queue);
   ~GstSubscriberNode();
 
-  void set_topic_name(const std::string& topic_name);
+  void set_image_transport(const std::string& topic_name, const std::string& transport_type = "raw");
   void on_image(const sensor_msgs::msg::Image::ConstSharedPtr& msg);
-
+  void on_compressed_image(const sensor_msgs::msg::CompressedImage::ConstSharedPtr& msg);
+private:
+  void SetBufferSizeTo(size_t max_size);
+  void RecordImageTime(rclcpp::Time time_point);
   image_transport::Subscriber subscriber_;
-  std::shared_ptr<std::queue<sensor_msgs::msg::Image::ConstSharedPtr>> queue_;
+  std::shared_ptr<std::queue<SupportedImageType>> queue_;
   rclcpp::Time prev_time_;
 };
 
@@ -63,12 +72,13 @@ typedef struct _GstRclcppSubscriberClass GstRclcppSubscriberClass;
 struct _GstRclcppSubscriber
 {
   GstPushSrc base_rclcppsubscriber;
-  std::shared_ptr<std::queue<sensor_msgs::msg::Image::ConstSharedPtr>> queue;
+  std::shared_ptr<std::queue<SupportedImageType>> queue;
   std::shared_ptr<GstSubscriberNode> node;
   CapsState initialized_caps;
 
   std::string node_name;
   std::string topic_name;
+  std::string transport_type;
 };
 
 struct _GstRclcppSubscriberClass

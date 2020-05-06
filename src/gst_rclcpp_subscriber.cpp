@@ -58,6 +58,8 @@ static void rclcpp_subscriber_set_node_name(GstRclcppSubscriber *rclcpp_subscrib
                                             const GValue* node_name_value);
 static void rclcpp_subscriber_set_topic_name(GstRclcppSubscriber *rclcpp_subscriber,
                                              const GValue* topic_value);
+static void rclcpp_subscriber_set_transport_type(GstRclcppSubscriber *rclcpp_subscriber,
+                                                 const GValue* transport_type);
 // static GstCaps *gst_rclcpp_subscriber_get_caps (GstPushSrc * src, GstCaps * filter);
 // static gboolean gst_rclcpp_subscriber_negotiate (GstPushSrc * src);
 static GstCaps *gst_rclcpp_subscriber_fixate (GstBaseSrc * src, GstCaps * caps);
@@ -88,6 +90,7 @@ enum
   PROP_UNDEFINED,
   PROP_NODE_NAME,
   PROP_TOPIC_NAME,
+  PROP_TRANSPORT_TYPE,
 };
 
 const std::string construct_caps_str() {
@@ -172,6 +175,10 @@ gst_rclcpp_subscriber_class_init (GstRclcppSubscriberClass * klass)
     g_param_spec_string ("topic-name", "Topic Name",
               "Name of rclcpp topic (default = image)",
               "image", static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property (gobject_class, PROP_TRANSPORT_TYPE,
+    g_param_spec_string ("transport-type", "Transport Type",
+              "Image transport type, (raw, compressed)",
+              "raw", static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
 }
 
@@ -179,7 +186,7 @@ static void
 gst_rclcpp_subscriber_init (GstRclcppSubscriber *rclcpp_subscriber)
 {
   rclcpp::init(0, nullptr);
-  rclcpp_subscriber->queue = std::make_shared<std::queue<sensor_msgs::msg::Image::ConstSharedPtr>>();
+  rclcpp_subscriber->queue = std::make_shared<std::queue<SupportedImageType>>();
   rclcpp_subscriber->node = nullptr;
   rclcpp_subscriber->topic_name = "image";
   rclcpp_subscriber->initialized_caps = CapsState::UNITIALIZED;
@@ -193,7 +200,7 @@ gst_rclcpp_subscriber_init (GstRclcppSubscriber *rclcpp_subscriber)
   // Create node with default name and topic name
   rclcpp_subscriber->node =
     std::make_shared<GstSubscriberNode>("gst_publisher", rclcpp_subscriber->queue);
-  rclcpp_subscriber->node->set_topic_name(rclcpp_subscriber->topic_name);
+  rclcpp_subscriber->node->set_image_transport(rclcpp_subscriber->topic_name, rclcpp_subscriber->transport_type);
 }
 
 void rclcpp_subscriber_set_node_name(GstRclcppSubscriber *rclcpp_subscriber, const GValue* node_name_value) {
@@ -205,7 +212,7 @@ void rclcpp_subscriber_set_node_name(GstRclcppSubscriber *rclcpp_subscriber, con
   std::cout << "Creating subscriber node with name: " << node_name << std::endl;
   rclcpp_subscriber->node =
     std::make_shared<GstSubscriberNode>(node_name, rclcpp_subscriber->queue);
-  rclcpp_subscriber->node->set_topic_name(rclcpp_subscriber->topic_name);
+  rclcpp_subscriber->node->set_image_transport(rclcpp_subscriber->topic_name, rclcpp_subscriber->transport_type);
 }
 
 void rclcpp_subscriber_set_topic_name(GstRclcppSubscriber *rclcpp_subscriber,
@@ -217,9 +224,20 @@ void rclcpp_subscriber_set_topic_name(GstRclcppSubscriber *rclcpp_subscriber,
   g_assert(rclcpp_subscriber->node);
   std::cout << "Subscribing to topic name: " << topic_str << std::endl;
   rclcpp_subscriber->topic_name = topic_str;
-  rclcpp_subscriber->node->set_topic_name(rclcpp_subscriber->topic_name);
+  rclcpp_subscriber->node->set_image_transport(rclcpp_subscriber->topic_name, rclcpp_subscriber->transport_type);
 }
 
+void rclcpp_subscriber_set_transport_type(GstRclcppSubscriber *rclcpp_subscriber,
+                                                 const GValue* transport_type_value) {
+  g_assert(transport_type_value);
+  auto transport_type_str = g_value_get_string(transport_type_value);
+  g_assert(transport_type_str);
+  g_assert(transport_type_str[0] != '\0');
+  g_assert(rclcpp_subscriber->node);
+  std::cout << "Setting transport type: " << transport_type_str << std::endl;
+  rclcpp_subscriber->transport_type = transport_type_str;
+  rclcpp_subscriber->node->set_image_transport(rclcpp_subscriber->topic_name, rclcpp_subscriber->transport_type);
+}
 void
 gst_rclcpp_subscriber_set_property (GObject * object, guint property_id,
     const GValue * value, GParamSpec * pspec)
@@ -233,6 +251,9 @@ gst_rclcpp_subscriber_set_property (GObject * object, guint property_id,
       break;
     case PROP_TOPIC_NAME:
       rclcpp_subscriber_set_topic_name(rclcpp_subscriber, value);
+      break;
+    case PROP_TRANSPORT_TYPE:
+      rclcpp_subscriber_set_transport_type(rclcpp_subscriber, value);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
@@ -254,6 +275,9 @@ gst_rclcpp_subscriber_get_property (GObject * object, guint property_id,
       break;
     case PROP_TOPIC_NAME:
       g_value_set_string(value, rclcpp_subscriber->topic_name.c_str());
+      break;
+    case PROP_TRANSPORT_TYPE:
+      g_value_set_string(value, rclcpp_subscriber->transport_type.c_str());
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
@@ -340,7 +364,7 @@ static void print_caps (const GstCaps * caps, const gchar * pfx) {
 }
 
 static void
-gst_rclcpp_subscriber_get_caps_info(const sensor_msgs::msg::Image& image,
+gst_rclcpp_subscriber_get_caps_info(const SupportedImageType& image,
     gint* width, gint* height, std::string* encoding, gint* channels) {
   *encoding = EncodingConversions::ros_to_gst(image.encoding).c_str();
   *width = image.width;
@@ -605,7 +629,7 @@ gst_rclcpp_subscriber_fixate (GstBaseSrc * src, GstCaps * caps)
 // }
 
 static bool gst_rclcpp_subscriber_need_updated_caps(
-    GstRclcppSubscriber * src, const sensor_msgs::msg::Image& ros_image) {
+    GstRclcppSubscriber * src, const SupportedImageType& ros_image) {
   auto& srcpad = src->base_rclcppsubscriber.parent.srcpad;
   const GstCaps * caps  = gst_pad_get_current_caps(srcpad);
   GstStructure * structure = gst_caps_get_structure (caps, 0);
@@ -638,7 +662,7 @@ static bool gst_rclcpp_subscriber_need_updated_caps(
 }
 
 static bool gst_rclcpp_subscriber_update_caps(
-    GstRclcppSubscriber * src, const sensor_msgs::msg::Image& ros_image) {
+    GstRclcppSubscriber * src, const SupportedImageType& ros_image) {
   gint new_width = 0;
   gint new_height = 0;
   gint new_channels = 0;
@@ -748,25 +772,51 @@ GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
     plugin_init, VERSION, "LGPL", PACKAGE_NAME, GST_PACKAGE_ORIGIN)
 
 GstSubscriberNode::GstSubscriberNode(
-  const std::string& name, std::shared_ptr<std::queue<sensor_msgs::msg::Image::ConstSharedPtr>> queue)
+  const std::string& name, std::shared_ptr<std::queue<SupportedImageType>> queue)
 : rclcpp::Node(name),  queue_(queue) {}
 
 GstSubscriberNode::~GstSubscriberNode() {}
 
-void GstSubscriberNode::set_topic_name(const std::string& topic_name) {
-  std::cout << "Subscribing to topic: " << topic_name << std::endl;
+void GstSubscriberNode::set_image_transport(const std::string& topic_name, const std::string& transport_type) {
+  std::cout << "Subscribing to topic: '" << topic_name << "' with transport type '" << transport_type << "'" << std::endl;
+
+  // This lambda expression is not the callback, it is only a tribute (i.e. it's invoked right now)
+  auto* callback = [&]{
+    if (transport_type.compare("raw") == 0) {
+      return &GstSubscriberNode::on_image;
+    } else if (transport_type.compare("compressed") == 0) {
+      return &GstSubscriberNode::on_compressed_image;
+    } else {
+      g_print("Unsupported transport type");
+      g_assert(FALSE);
+    }
+  }();
+
   subscriber_ = image_transport::create_subscription(
-    this, topic_name, std::bind(&GstSubscriberNode::on_image, this, std::placeholders::_1), "raw");
+    this, topic_name, std::bind(callback, this, std::placeholders::_1), transport_type);
 }
 
-void GstSubscriberNode::on_image(const sensor_msgs::msg::Image::ConstSharedPtr& msg) {
+void GstSubscriberNode::SetBufferSizeTo(size_t max_size){
   while(queue_->size() > 1) {
     g_print("Dropping frames, maybe increase framerate?");
     queue_->pop();
   }
-  auto now = rclcpp::Time(msg->header.stamp.sec, msg->header.stamp.nanosec);
-  auto diff = now - prev_time_;
+}
+
+void GstSubscriberNode::RecordImageTime(rclcpp::Time time_point) {
+  auto diff = time_point - prev_time_;
   // std::cout << "Diff: " << diff.nanoseconds()/1000 << std::endl;
-  prev_time_ = now;
+  prev_time_ = time_point;
+}
+
+void GstSubscriberNode::on_compressed_image(const sensor_msgs::msg::CompressedImage::ConstSharedPtr& msg) {
+  SetBufferSizeTo(1);
+  RecordImageTime(rclcpp::Time(msg->header.stamp.sec, msg->header.stamp.nanosec));
+  queue_->push(msg);
+}
+
+void GstSubscriberNode::on_image(const sensor_msgs::msg::Image::ConstSharedPtr& msg) {
+  SetBufferSizeTo(1);
+  RecordImageTime(rclcpp::Time(msg->header.stamp.sec, msg->header.stamp.nanosec));
   queue_->push(msg);
 }
